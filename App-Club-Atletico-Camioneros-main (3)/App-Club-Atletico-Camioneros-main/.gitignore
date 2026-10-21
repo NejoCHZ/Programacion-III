@@ -1,0 +1,45 @@
+# Dependencies and generated frontend output
+**/node_modules/
+**/.angular/
+**/dist/
+**/tmp/
+**/out-tsc/
+**/bazel-out/
+**/coverage/
+
+# .NET build and user output
+**/bin/
+**/obj/
+**/.vs/
+**/TestResults/
+*.user
+*.suo
+
+# Local runtime state
+.runtime/
+*.log
+*.pid
+npm-debug.log*
+yarn-error.log*
+
+# IDE and OS files
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.history/
+.DS_Store
+Thumbs.db
+
+# Local-only configuration
+.env
+.env.*
+!.env.example
+.agents/test-users.local.md
+
+# Archives and temporary files
+*.zip
+*.tmp
+*.temp

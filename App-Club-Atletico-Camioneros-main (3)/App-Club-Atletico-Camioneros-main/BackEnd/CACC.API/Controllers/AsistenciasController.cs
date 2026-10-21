@@ -1,0 +1,113 @@
+using CACC.API.DTOs;
+using CACC.DAO;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using CACC.API.Security;
+
+namespace CACC.API.Controllers
+{
+    [ApiController]
+    [Route("api/asistencias")]
+    [Authorize]
+    public class AsistenciasController : ControllerBase
+    {
+        private readonly IAsistenciaDao _asistenciaDao;
+        private readonly IJugadorDao _jugadorDao;
+        private readonly ICurrentUserAccess _access;
+
+        public AsistenciasController(
+            IAsistenciaDao asistenciaDao,
+            IJugadorDao jugadorDao,
+            ICurrentUserAccess access)
+        {
+            _asistenciaDao = asistenciaDao;
+            _jugadorDao = jugadorDao;
+            _access = access;
+        }
+
+        [HttpPost("verificar-y-registrar")]
+        [Authorize(Roles = AppRoles.Administradores + "," + AppRoles.DonQr)]
+        public async Task<IActionResult> VerificarYRegistrar([FromBody] AsistenciaRequestDto request)
+        {
+            if (string.IsNullOrWhiteSpace(request.Dni))
+            {
+                return BadRequest(new { message = "El DNI es obligatorio." });
+            }
+
+            var metodoRegistro = request.MetodoRegistro?.Trim().ToUpperInvariant();
+            if (metodoRegistro is not ("DNI_MANUAL" or "QR"))
+            {
+                return BadRequest(new { message = "El método de registro debe ser DNI_MANUAL o QR." });
+            }
+
+            var resultado = await _asistenciaDao.ProcesarIngresoAsync(request.Dni.Trim(), metodoRegistro);
+            if (!resultado.PersonaEncontrada)
+            {
+                return UnprocessableEntity(new { message = resultado.Error ?? "No se pudo identificar un jugador inequívoco." });
+            }
+            var mensaje = resultado.YaRegistrada
+                ? resultado.AccesoPermitido
+                    ? "La asistencia ya estaba registrada para hoy."
+                    : "Acceso denegado. El intento de ingreso ya estaba registrado para hoy."
+                : resultado.CuotasVencidas switch {
+                    0 => "Asistencia registrada. Acceso permitido.",
+                    1 => "Asistencia registrada. El jugador posee un mes de deuda.",
+                    _ => $"Acceso denegado. El jugador posee {resultado.CuotasVencidas} cuotas vencidas. El intento de ingreso fue registrado."
+                };
+            return Ok(new
+            {
+                accesoPermitido = resultado.AccesoPermitido,
+                estadoAcceso = resultado.EstadoAcceso,
+                asistenciaRegistrada = resultado.AsistenciaRegistrada,
+                yaRegistrada = resultado.YaRegistrada,
+                mensaje,
+                deudaTotal = resultado.DeudaTotal,
+                cuotasVencidas = resultado.CuotasVencidas
+            });
+        }
+
+        [HttpGet("jugador/{idJugador:int}")]
+        public async Task<IActionResult> ObtenerHistorialJugador(
+            int idJugador,
+            [FromQuery] DateTime? desde,
+            [FromQuery] DateTime? hasta,
+            [FromQuery] string? estado)
+        {
+            if (idJugador <= 0)
+            {
+                return BadRequest(new { message = "El jugador solicitado no es válido." });
+            }
+
+            if (desde.HasValue && hasta.HasValue && desde.Value.Date > hasta.Value.Date)
+            {
+                return BadRequest(new { message = "La fecha desde no puede ser posterior a la fecha hasta." });
+            }
+
+            var jugador = await _jugadorDao.ObtenerPorIdAsync(idJugador);
+            if (jugador is null)
+            {
+                return NotFound(new { message = "Jugador no encontrado." });
+            }
+
+            if (!_access.PuedeAccederAlgunaCategoria(jugador.CategoriasIds))
+            {
+                return Forbid();
+            }
+
+            var asistencias = await _asistenciaDao.ObtenerHistorialJugadorAsync(
+                idJugador,
+                desde,
+                hasta,
+                string.IsNullOrWhiteSpace(estado) ? null : estado.Trim());
+
+            return Ok(asistencias.Select(asistencia => new AsistenciaResponseDto
+            {
+                IdAsistencia = asistencia.IdAsistencia,
+                IdJugador = asistencia.IdJugador,
+                FechaHora = asistencia.FechaHora,
+                EstadoAcceso = asistencia.EstadoAcceso,
+                Observaciones = asistencia.Observaciones
+            }));
+        }
+    }
+}
